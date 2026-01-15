@@ -1,0 +1,15 @@
+# MCP Servers Configuration
+# Настройки MCP серверов для взаимодействия с внешними сервисами
+
+servers:
+  ticket_service:
+    host: "localhost"
+    port: 8000
+    endpoint: "/mcp"
+    description: "Сервис для управления тикетами"
+    
+  # Пример добавления дополнительного сервера:
+  # another_service:
+  #   host: "192.168.1.100"
+  #   port: 9000
+  #   endpoint: "/api/mcp"

@@ -1,0 +1,14 @@
+# Local LLM Configuration
+# Настройки локальной LLM для создания эмбедингов
+
+embedding_model:
+  host: "localhost"
+  port: 11434
+  model_name: "mxbai-embed-large"
+  endpoint: "/api/embeddings"
+  # Альтернативные модели: mxbai-embed-large, all-minilm
+  
+# Таймауты и настройки подключения
+connection:
+  timeout: 30  # секунды
+  retry_attempts: 3
