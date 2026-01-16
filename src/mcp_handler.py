@@ -238,9 +238,10 @@ class MCPHandler:
             json_content = match.group(1)
             data = json.loads(json_content)
             
+            # Default parameters to empty dict if not provided
             return ToolCallRequest(
                 tool_name=data["tool"],
-                parameters=data["parameters"]
+                parameters=data.get("parameters", {})
             )
         except (json.JSONDecodeError, KeyError):
             return None

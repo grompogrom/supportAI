@@ -7,7 +7,9 @@
 
 import os
 import sys
-from typing import Optional
+import json
+from datetime import datetime
+from typing import Optional, Any, Dict, List
 
 import yaml
 
@@ -114,6 +116,28 @@ class SupportAssistant:
                     }
                 },
                 "required": ["query"]
+            }
+        )
+
+        # Зарегистрируй локальный инструмент recommend_tasks
+        self._mcp_handler.register_local_tool(
+            name="recommend_tasks",
+            handler=self._recommend_tasks,
+            description="Детерминированные рекомендации по приоритету задач",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "priority": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Фильтр по приоритету (например: critical/high/medium/low)"
+                    },
+                    "status": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Фильтр по статусу (например: open/in_progress/blocked/done)"
+                    }
+                }
             }
         )
         
@@ -343,6 +367,11 @@ class SupportAssistant:
                 formatted_result
             )
         
+        # Safety: strip any remaining tool_call tags if loop broke early
+        if self._mcp_handler.has_tool_call(current_response):
+            import re
+            current_response = re.sub(r'<tool_call>.*?</tool_call>', '', current_response, flags=re.DOTALL).strip()
+        
         return current_response
     
     def _search_knowledge_base(self, query: str) -> dict:
@@ -353,6 +382,181 @@ class SupportAssistant:
             return {"success": True, "results": formatted}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _recommend_tasks(self, priority: Optional[List[str]] = None,
+                         status: Optional[List[str]] = None) -> dict:
+        """
+        Детерминированная рекомендация задач.
+
+        Алгоритм:
+        - вызвать MCP list_tasks с фильтрами
+        - исключить статус done
+        - отсортировать по priority, blocked_by, due_date
+        - вернуть top_tasks, reasoning, notes
+        """
+        filters: Dict[str, Any] = {}
+        if priority:
+            filters["priority"] = list(priority)
+        if status:
+            filters["status"] = list(status)
+
+        request = ToolCallRequest(tool_name="list_tasks", parameters=filters)
+        result = self._mcp_handler.call_tool(request)
+        if not result.success:
+            return {"success": False, "error": result.error_message}
+
+        tasks = self._extract_tasks(result.result)
+        if not isinstance(tasks, list):
+            return {"success": False, "error": "Непредвиденный формат результата list_tasks"}
+
+        normalized = [self._normalize_task(task) for task in tasks if isinstance(task, dict)]
+
+        # Фильтруем done и применяем явные фильтры, если list_tasks их не обработал
+        filtered = []
+        for task in normalized:
+            if task["status"] == "done":
+                continue
+            if priority and task["priority"] and task["priority"] not in [p.lower() for p in priority]:
+                continue
+            if status and task["status"] and task["status"] not in [s.lower() for s in status]:
+                continue
+            filtered.append(task)
+
+        ranked = sorted(filtered, key=self._task_sort_key)
+        top_tasks = [self._present_task(task) for task in ranked[:3]]
+
+        reasoning = []
+        for task in ranked[:3]:
+            reasoning.append(self._build_reasoning(task))
+
+        notes = [
+            "Сортировка: status (исключая done) → priority → blocked_by → due_date",
+            "Приоритеты: critical > high > medium > low"
+        ]
+
+        return {
+            "success": True,
+            "top_tasks": top_tasks,
+            "reasoning": reasoning,
+            "notes": notes
+        }
+
+    def _extract_tasks(self, raw_result: Any) -> List[Dict[str, Any]]:
+        """Пытается извлечь список задач из результата list_tasks."""
+        if isinstance(raw_result, list):
+            return raw_result
+
+        if isinstance(raw_result, dict):
+            for key in ("tasks", "items", "data", "result"):
+                value = raw_result.get(key)
+                if isinstance(value, list):
+                    return value
+
+            content = raw_result.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") != "text":
+                        continue
+                    text = item.get("text", "")
+                    try:
+                        parsed = json.loads(text)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(parsed, list):
+                        return parsed
+                    if isinstance(parsed, dict):
+                        for key in ("tasks", "items", "data", "result"):
+                            value = parsed.get(key)
+                            if isinstance(value, list):
+                                return value
+
+        return []
+
+    def _normalize_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Нормализация полей задачи для сортировки."""
+        task_id = task.get("id") or task.get("task_id") or task.get("key")
+        title = task.get("title") or task.get("summary") or task.get("name")
+        status = (task.get("status") or "").lower()
+        priority = (task.get("priority") or "").lower()
+        blocked_by = task.get("blocked_by") or task.get("blockedBy") or []
+        due_date_raw = task.get("due_date") or task.get("dueDate") or task.get("deadline")
+
+        blocked = False
+        if isinstance(blocked_by, list):
+            blocked = len(blocked_by) > 0
+        elif isinstance(blocked_by, str):
+            blocked = blocked_by.strip() != ""
+        elif blocked_by:
+            blocked = True
+
+        due_date = None
+        if isinstance(due_date_raw, str):
+            try:
+                due_date = datetime.fromisoformat(due_date_raw.replace("Z", "+00:00"))
+            except ValueError:
+                due_date = None
+
+        return {
+            "id": task_id,
+            "title": title,
+            "status": status,
+            "priority": priority,
+            "blocked": blocked,
+            "blocked_by": blocked_by,
+            "due_date": due_date,
+            "due_date_raw": due_date_raw
+        }
+
+    def _task_sort_key(self, task: Dict[str, Any]) -> tuple:
+        """Ключ сортировки для рекомендаций."""
+        status_rank = {
+            "in_progress": 0,
+            "open": 1,
+            "todo": 2,
+            "blocked": 3,
+            "on_hold": 4
+        }
+        priority_rank = {
+            "critical": 0,
+            "high": 1,
+            "medium": 2,
+            "low": 3
+        }
+        return (
+            status_rank.get(task["status"], 5),
+            priority_rank.get(task["priority"], 4),
+            1 if task["blocked"] else 0,
+            task["due_date"] or datetime.max,
+            task["title"] or ""
+        )
+
+    def _present_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Упрощенный вид задачи для ответа инструмента."""
+        return {
+            "id": task["id"],
+            "title": task["title"],
+            "status": task["status"],
+            "priority": task["priority"],
+            "due_date": task["due_date_raw"],
+            "blocked_by": task["blocked_by"]
+        }
+
+    def _build_reasoning(self, task: Dict[str, Any]) -> str:
+        """Короткое объяснение позиции задачи в рейтинге."""
+        parts = []
+        if task["priority"]:
+            parts.append(f"priority={task['priority']}")
+        if task["status"]:
+            parts.append(f"status={task['status']}")
+        if task["blocked"]:
+            parts.append("blocked_by есть")
+        if task["due_date_raw"]:
+            parts.append(f"due_date={task['due_date_raw']}")
+        details = ", ".join(parts) if parts else "нет метаданных"
+        title = task["title"] or task["id"] or "задача"
+        return f"{title}: {details}"
     
     def clear_history(self) -> None:
         """
