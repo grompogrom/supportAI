@@ -13,7 +13,7 @@ from typing import Optional, Any, Dict, List
 
 import yaml
 
-from llm_client import LLMClient
+from llm_client import PerplexityClient, LocalLLMClient, BaseLLMClient
 from mcp_handler import MCPHandler, MCPServerConfig, ToolCallRequest
 from rag import DocumentIndexer, EmbeddingGenerator, DocumentRetriever
 from rag.embeddings import EmbeddingConfig
@@ -145,10 +145,8 @@ class SupportAssistant:
         tools = self._fetch_mcp_tools()
         
         # 6. LLM Client с динамическим системным промптом
-        self._llm_client = LLMClient(
-            api_key=self._api_config['perplexity']['api_key'],
-            system_prompt=get_system_prompt(tools_override=tools)
-        )
+        system_prompt = get_system_prompt(tools_override=tools)
+        self._llm_client = self._create_llm_client(system_prompt)
     
     def _fetch_mcp_tools(self) -> list:
         """
@@ -177,6 +175,53 @@ class SupportAssistant:
             })
         
         return tools
+    
+    def _create_llm_client(self, system_prompt: str) -> BaseLLMClient:
+        """
+        Создание LLM клиента в зависимости от конфигурации.
+        
+        Args:
+            system_prompt: Системный промпт для модели
+            
+        Returns:
+            Экземпляр LLM клиента (Perplexity или локальный)
+        """
+        provider = self._api_config.get('llm_provider', 'perplexity').lower()
+        
+        if provider == 'local':
+            # Используем локальную модель через Ollama
+            chat_config = self._llm_config.get('chat_model', {})
+            host = chat_config.get('host', 'localhost')
+            port = chat_config.get('port', 11434)
+            model_name = chat_config.get('model_name', 'qwen3:8b')
+            temperature = chat_config.get('temperature', 0.7)
+            
+            print(f"[LLM] Используется локальная модель: {model_name} на {host}:{port}")
+            
+            client = LocalLLMClient(
+                host=host,
+                port=port,
+                model_name=model_name,
+                system_prompt=system_prompt,
+                temperature=temperature
+            )
+            
+            # Проверяем доступность модели
+            if not client.check_model_availability():
+                print(f"[LLM] ПРЕДУПРЕЖДЕНИЕ: Модель {model_name} недоступна!")
+                print(f"[LLM] Убедитесь, что Ollama запущен и модель загружена:")
+                print(f"[LLM]   ollama run {model_name}")
+            
+            return client
+        else:
+            # Используем Perplexity API (по умолчанию)
+            api_key = self._api_config['perplexity']['api_key']
+            print(f"[LLM] Используется Perplexity API (sonar-pro)")
+            
+            return PerplexityClient(
+                api_key=api_key,
+                system_prompt=system_prompt
+            )
     
     def start(self) -> None:
         """

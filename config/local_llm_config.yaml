@@ -1,12 +1,21 @@
 # Local LLM Configuration
-# Настройки локальной LLM для создания эмбедингов
+# Настройки локальной LLM для создания эмбедингов и chat
 
+# Модель для эмбедингов
 embedding_model:
   host: "localhost"
   port: 11434
   model_name: "mxbai-embed-large"
   endpoint: "/api/embeddings"
   # Альтернативные модели: mxbai-embed-large, all-minilm
+
+# Модель для chat (опционально, вместо Perplexity)
+chat_model:
+  host: "localhost"
+  port: 11434
+  model_name: "qwen3:8b"
+  # Альтернативные модели: llama3, mistral, qwen3:8b, phi3
+  temperature: 0.7
   
 # Таймауты и настройки подключения
 connection:

@@ -10,10 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from prompts.system_prompt import (
     SYSTEM_PROMPT,
-    TOOL_DEFINITIONS,
     get_system_prompt,
     format_tools_description,
-    get_tool_definitions,
 )
 
 
@@ -26,8 +24,9 @@ def test_get_system_prompt_without_args():
     result = get_system_prompt()
     
     assert result == SYSTEM_PROMPT, "Должен вернуть SYSTEM_PROMPT без изменений"
-    assert "ассистент службы поддержки" in result, "Промпт должен содержать описание роли"
+    assert "AI менеджер проекта" in result, "Промпт должен содержать описание роли"
     assert "create_ticket" in result, "Промпт должен содержать инструмент create_ticket"
+    assert "recommend_tasks" in result, "Промпт должен содержать инструмент recommend_tasks"
     
     print("✓ get_system_prompt() возвращает SYSTEM_PROMPT без изменений")
     print()
@@ -205,91 +204,10 @@ def test_format_tools_description_empty_parameters():
     return True
 
 
-def test_get_tool_definitions_returns_copy():
-    """Тест что get_tool_definitions возвращает копию."""
-    print("=" * 50)
-    print("Тест 7: get_tool_definitions возвращает копию")
-    print("=" * 50)
-    
-    defs1 = get_tool_definitions()
-    
-    # Проверяем что это не тот же объект
-    assert defs1 is not TOOL_DEFINITIONS, "Должен вернуть копию, не ссылку"
-    
-    # Проверяем что содержимое идентично
-    assert defs1 == TOOL_DEFINITIONS, "Содержимое должно быть идентичным"
-    
-    # Модифицируем копию
-    defs1[0]["name"] = "modified_name"
-    defs1[0]["parameters"]["user_name"]["description"] = "modified"
-    
-    # Проверяем что оригинал не изменился
-    assert TOOL_DEFINITIONS[0]["name"] == "create_ticket", "Оригинал не должен измениться"
-    assert TOOL_DEFINITIONS[0]["parameters"]["user_name"]["description"] == "Имя пользователя"
-    
-    print("✓ get_tool_definitions возвращает глубокую копию")
-    print()
-    return True
-
-
-def test_get_tool_definitions_content():
-    """Тест содержимого TOOL_DEFINITIONS."""
-    print("=" * 50)
-    print("Тест 8: Содержимое get_tool_definitions")
-    print("=" * 50)
-    
-    defs = get_tool_definitions()
-    
-    # Проверяем наличие всех инструментов
-    tool_names = [t["name"] for t in defs]
-    assert "create_ticket" in tool_names, "Должен содержать create_ticket"
-    assert "search_knowledge_base" in tool_names, "Должен содержать search_knowledge_base"
-    assert "get_ticket_status" in tool_names, "Должен содержать get_ticket_status"
-    
-    # Проверяем структуру create_ticket
-    create_ticket = next(t for t in defs if t["name"] == "create_ticket")
-    assert "description" in create_ticket
-    assert "parameters" in create_ticket
-    assert "user_name" in create_ticket["parameters"]
-    assert "issue_summary" in create_ticket["parameters"]
-    assert "issue_details" in create_ticket["parameters"]
-    assert "priority" in create_ticket["parameters"]
-    
-    print("✓ get_tool_definitions возвращает все определения инструментов")
-    print(f"  Найдено {len(defs)} инструментов: {', '.join(tool_names)}")
-    print()
-    return True
-
-
-def test_format_tools_with_tool_definitions():
-    """Тест форматирования реальных TOOL_DEFINITIONS."""
-    print("=" * 50)
-    print("Тест 9: Форматирование TOOL_DEFINITIONS")
-    print("=" * 50)
-    
-    defs = get_tool_definitions()
-    result = format_tools_description(defs)
-    
-    # Проверяем что все инструменты присутствуют
-    assert "create_ticket" in result
-    assert "search_knowledge_base" in result
-    assert "get_ticket_status" in result
-    
-    # Проверяем параметры create_ticket
-    assert "user_name" in result
-    assert "issue_summary" in result
-    assert "priority" in result
-    assert "[по умолчанию: medium]" in result
-    
-    print("✓ TOOL_DEFINITIONS корректно форматируются")
-    print()
-    return True
-
-
 def test_format_tools_description_missing_type():
     """Тест обработки параметра без указанного типа."""
     print("=" * 50)
-    print("Тест 10: Параметр без указанного типа")
+    print("Тест 7: Параметр без указанного типа")
     print("=" * 50)
     
     tools = [
@@ -328,9 +246,6 @@ def run_all_tests():
         ("format_tools_description с default", test_format_tools_description_with_defaults),
         ("format_tools_description несколько инструментов", test_format_tools_description_multiple_tools),
         ("format_tools_description без параметров", test_format_tools_description_empty_parameters),
-        ("get_tool_definitions копия", test_get_tool_definitions_returns_copy),
-        ("get_tool_definitions содержимое", test_get_tool_definitions_content),
-        ("Форматирование TOOL_DEFINITIONS", test_format_tools_with_tool_definitions),
         ("Параметр без типа", test_format_tools_description_missing_type),
     ]
     

@@ -264,14 +264,19 @@ class TestGetAvailableTools:
     
     def test_get_mcp_tools(self, handler):
         """Получение MCP инструментов."""
+        # Сначала получаем инструменты от серверов для регистрации маппинга
+        for server_name in handler._servers.keys():
+            handler.get_server_tools(server_name)
+        
         tools = handler.get_available_tools()
         tool_names = [t["name"] for t in tools]
         
-        assert "create_ticket" in tool_names
-        assert "get_ticket" in tool_names
-        assert "list_tickets" in tool_names
-        assert "update_ticket" in tool_names
-        assert "delete_ticket" in tool_names
+        # Проверяем что маппинг инструментов заполнен (MCP инструменты регистрируются в _tool_to_server)
+        assert len(handler._tool_to_server) > 1  # search_knowledge_base + MCP инструменты
+        assert "create_task" in handler._tool_to_server
+        assert "list_tasks" in handler._tool_to_server
+        assert "update_task" in handler._tool_to_server
+        # delete_ticket не существует в новом API, используется update_task со статусом
     
     def test_get_tools_includes_local(self, handler):
         """Локальные инструменты включены в список."""
@@ -382,19 +387,21 @@ class TestMCPServerIntegration:
         assert health["ticket_service"] is True
     
     def test_call_create_ticket(self, live_handler):
-        """Вызов инструмента create_ticket."""
+        """Вызов инструмента create_task."""
+        # Регистрируем инструменты от сервера
+        live_handler.get_server_tools('ticket_service')
+        
         request = ToolCallRequest(
-            tool_name="create_ticket",
+            tool_name="create_task",
             parameters={
-                "author": "Тест Пользователь",
-                "theme": "Тестовый тикет",
-                "description": "Тестовый тикет из pytest"
+                "title": "Тестовая задача",
+                "description": "Тестовая задача из pytest"
             }
         )
         
         result = live_handler.call_tool(request)
         
-        print(f"\nРезультат create_ticket: {result}")
+        print(f"\nРезультат create_task: {result}")
         
         assert result.success is True
         assert result.result is not None
@@ -403,15 +410,18 @@ class TestMCPServerIntegration:
             assert result.result.get("isError") is not True, f"Tool error: {result.result}"
     
     def test_call_list_tickets(self, live_handler):
-        """Вызов инструмента list_tickets."""
+        """Вызов инструмента list_tasks."""
+        # Регистрируем инструменты от сервера
+        live_handler.get_server_tools('ticket_service')
+        
         request = ToolCallRequest(
-            tool_name="list_tickets",
+            tool_name="list_tasks",
             parameters={}
         )
         
         result = live_handler.call_tool(request)
         
-        print(f"\nРезультат list_tickets: {result}")
+        print(f"\nРезультат list_tasks: {result}")
         
         assert result.success is True
         assert result.result is not None
@@ -484,16 +494,18 @@ class TestMCPServerIntegration:
         3. Выполняем инструмент
         4. Форматируем результат
         """
+        # Регистрируем инструменты от сервера
+        live_handler.get_server_tools('ticket_service')
+        
         # Симулируем ответ LLM
         llm_response = '''
-Хорошо, я создам для вас тикет.
+Хорошо, я создам для вас задачу.
 
 <tool_call>
 {
-  "tool": "create_ticket",
+  "tool": "create_task",
   "parameters": {
-    "author": "Интеграционный Тест",
-    "theme": "Полный рабочий процесс",
+    "title": "Полный рабочий процесс",
     "description": "Тестирование полного рабочего процесса MCP"
   }
 }
@@ -506,7 +518,7 @@ class TestMCPServerIntegration:
         # 2. Парсим
         request = live_handler.parse_tool_call(llm_response)
         assert request is not None
-        assert request.tool_name == "create_ticket"
+        assert request.tool_name == "create_task"
         
         # 3. Выполняем
         result = live_handler.call_tool(request)

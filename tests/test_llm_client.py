@@ -9,19 +9,49 @@ import yaml
 # Добавляем путь к src для импорта
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from llm_client import LLMClient, AuthenticationError, RateLimitError, APIError
+from llm_client import (
+    PerplexityClient, LocalLLMClient, BaseLLMClient,
+    AuthenticationError, RateLimitError, APIError,
+    LocalLLMError, LocalLLMConnectionError
+)
 
 
-def load_api_key():
-    """Загружает API ключ из конфига."""
+def load_config():
+    """Загружает конфигурацию."""
     config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'api_keys.yaml')
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    return config['perplexity']['api_key']
+    
+    llm_config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'local_llm_config.yaml')
+    with open(llm_config_path, 'r') as f:
+        llm_config = yaml.safe_load(f)
+    
+    return config, llm_config
 
 
-# API ключ для тестирования (загружается из config/api_keys.yaml)
-API_KEY = load_api_key()
+# Конфигурация для тестирования
+API_CONFIG, LLM_CONFIG = load_config()
+API_KEY = API_CONFIG['perplexity']['api_key']
+USE_LOCAL = API_CONFIG.get('llm_provider', 'perplexity').lower() == 'local'
+
+
+def create_test_client(system_prompt: str) -> BaseLLMClient:
+    """Создает клиента в зависимости от конфигурации."""
+    if USE_LOCAL:
+        chat_config = LLM_CONFIG.get('chat_model', {})
+        return LocalLLMClient(
+            host=chat_config.get('host', 'localhost'),
+            port=chat_config.get('port', 11434),
+            model_name=chat_config.get('model_name', 'qwen3:8b'),
+            system_prompt=system_prompt,
+            temperature=chat_config.get('temperature', 0.7)
+        )
+    else:
+        return PerplexityClient(api_key=API_KEY, system_prompt=system_prompt)
+
+
+# Для обратной совместимости
+LLMClient = create_test_client
 
 
 def test_initialization():
@@ -30,14 +60,15 @@ def test_initialization():
     print("Тест 1: Инициализация клиента")
     print("=" * 50)
     
-    client = LLMClient(api_key=API_KEY, system_prompt="Ты полезный ассистент")
+    client = create_test_client("Ты полезный ассистент")
     
     history = client.get_messages_history()
     assert len(history) == 1, f"Ожидалось 1 сообщение, получено {len(history)}"
     assert history[0]["role"] == "system", "Первое сообщение должно быть системным"
     assert history[0]["content"] == "Ты полезный ассистент", "Неверный системный промпт"
     
-    print("✓ Инициализация успешна")
+    provider = "LocalLLM" if USE_LOCAL else "Perplexity"
+    print(f"✓ Инициализация успешна ({provider})")
     print(f"  История: {history}")
     print()
     return True
@@ -49,7 +80,7 @@ def test_send_message():
     print("Тест 2: Отправка сообщения")
     print("=" * 50)
     
-    client = LLMClient(api_key=API_KEY, system_prompt="Ты полезный ассистент. Отвечай кратко.")
+    client = create_test_client("Ты полезный ассистент. Отвечай кратко.")
     
     try:
         response = client.send_message("Скажи 'привет' одним словом")
@@ -75,7 +106,7 @@ def test_clear_history():
     print("Тест 3: Очистка истории")
     print("=" * 50)
     
-    client = LLMClient(api_key=API_KEY, system_prompt="Системный промпт")
+    client = create_test_client("Системный промпт")
     
     # Добавим сообщение вручную для теста (без API вызова)
     client._messages.append({"role": "user", "content": "тест"})
@@ -101,7 +132,7 @@ def test_set_system_prompt():
     print("Тест 4: Изменение системного промпта")
     print("=" * 50)
     
-    client = LLMClient(api_key=API_KEY, system_prompt="Старый промпт")
+    client = create_test_client("Старый промпт")
     
     client.set_system_prompt("Новый промпт")
     
@@ -119,7 +150,7 @@ def test_get_messages_history_returns_copy():
     print("Тест 5: Возврат копии истории")
     print("=" * 50)
     
-    client = LLMClient(api_key=API_KEY, system_prompt="Тест")
+    client = create_test_client("Тест")
     
     history1 = client.get_messages_history()
     history1.append({"role": "user", "content": "хак"})
@@ -133,12 +164,17 @@ def test_get_messages_history_returns_copy():
 
 
 def test_invalid_api_key():
-    """Тест с неверным API ключом."""
+    """Тест с неверным API ключом (только для Perplexity)."""
     print("=" * 50)
     print("Тест 6: Неверный API ключ")
     print("=" * 50)
     
-    client = LLMClient(api_key="invalid-key", system_prompt="Тест")
+    if USE_LOCAL:
+        print("⊘ Тест пропущен (используется локальная модель)")
+        print()
+        return True
+    
+    client = PerplexityClient(api_key="invalid-key", system_prompt="Тест")
     
     try:
         client.send_message("Привет")
@@ -160,7 +196,7 @@ def test_send_tool_result():
     print("Тест 7: Отправка результата инструмента")
     print("=" * 50)
     
-    client = LLMClient(api_key=API_KEY, system_prompt="Ты ассистент. Отвечай кратко.")
+    client = create_test_client("Ты ассистент. Отвечай кратко.")
     
     try:
         # Сначала отправим сообщение
@@ -188,6 +224,8 @@ def run_all_tests():
     """Запуск всех тестов."""
     print("\n" + "=" * 50)
     print("ЗАПУСК ТЕСТОВ LLM CLIENT")
+    provider = "LocalLLM (qwen3:8b)" if USE_LOCAL else "Perplexity API"
+    print(f"Провайдер: {provider}")
     print("=" * 50 + "\n")
     
     tests = [
