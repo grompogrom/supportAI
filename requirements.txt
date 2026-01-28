@@ -15,3 +15,7 @@ rich>=13.0.0
 
 # Типизация (для Python < 3.10)
 typing-extensions>=4.0.0
+
+# Голосовой ввод
+SpeechRecognition>=3.10.0
+PyAudio>=0.2.13
